@@ -1,3 +1,4 @@
+import json
 from typing import Collection, Mapping, Union
 from pyspark.sql import SparkSession, DataFrame, Column
 from pyspark import SparkConf
@@ -10,6 +11,8 @@ from pyspark.sql.types import (
     DoubleType,
 )
 
+from boto3 import client
+
 config = {
     "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.2.0,net.snowflake:spark-snowflake_2.12:2.9.0-spark_3.1,net.snowflake:snowflake-jdbc:3.13.3",
     "fs.s3a.aws.credentials.provider": "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
@@ -21,6 +24,7 @@ S3_BUCKET_OPENAQ = "s3a://dataminded-academy-capstone-resources/raw/open_aq/"
 def read_data(path):
     conf = SparkConf().setAll(config.items())
     spark = SparkSession.builder.config(conf= conf).getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
 
     return spark.read.json(
         path
@@ -36,6 +40,31 @@ def clean_data(frame: DataFrame) -> DataFrame:
         frame = transformation(frame)
     return frame
                         
+
+def to_snowflake(frame: DataFrame) -> None:
+
+    aws_client = client("secretsmanager", region_name="eu-west-1")
+    SNOWFLAKE_SECRET_ID = "snowflake/capstone/config"
+    snowflake_secret = aws_client.get_secret_value(SecretId=SNOWFLAKE_SECRET_ID)
+    snowflake_settings = json.loads(snowflake_secret["SecretString"])
+    
+    sfOptions = {
+        "sfURL": snowflake_settings.get("URL"),
+        "sfUser": snowflake_settings.get("USER_NAME"),
+        "sfPassword": snowflake_settings.get("PASSWORD"),
+        "sfDatabase": snowflake_settings.get("DATABASE"),
+        "sfSchema": "WILLEM",
+        "sfWarehouse": snowflake_settings.get("WAREHOUSE"),
+        "sfRole": snowflake_settings.get("ROLE"),
+    }
+    
+    frame.write.format("net.snowflake.spark.snowflake") \
+        .options(**sfOptions) \
+        .option("dbtable", "openaq") \
+        .mode("overwrite") \
+        .save()
+    
+    pass
 
 def to_bool(
     c: str, true_values: Collection[str], false_values: Collection[str]
@@ -145,3 +174,4 @@ if __name__ == "__main__":
     frame = clean_data(frame)
     frame.printSchema()
     frame.describe().show()
+    to_snowflake(frame)
