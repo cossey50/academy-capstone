@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Collection, Mapping, Union
 from pyspark.sql import SparkSession, DataFrame, Column
 from pyspark import SparkConf
@@ -11,15 +12,21 @@ from pyspark.sql.types import (
     DoubleType,
 )
 
+
 from boto3 import client
 
+# Spark jars already present in the base image provided.
 config = {
-    "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.2.0,net.snowflake:spark-snowflake_2.12:2.9.0-spark_3.1,net.snowflake:snowflake-jdbc:3.13.3",
+#     "spark.jars.packages": "org.apache.hadoop:hadoop-aws:3.2.0,net.snowflake:spark-snowflake_2.12:2.9.0-spark_3.1,net.snowflake:snowflake-jdbc:3.13.3",
     "fs.s3a.aws.credentials.provider": "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
 
 }
 
-S3_BUCKET_OPENAQ = "s3a://dataminded-academy-capstone-resources/raw/open_aq/"
+S3_BUCKET_OPENAQ = os.environ.get("S3_BUCKET_OPENAQ")
+SECRET_ARN = os.environ.get("SECRET_ARN")
+SNOWFLAKE_SCHEMA = os.environ.get("SNOWFLAKE_SCHEMA")
+SNOWFLAKE_SOURCE_NAME = os.environ.get("SNOWFLAKE_SOURCE_NAME")
+
 
 def read_data(path):
     conf = SparkConf().setAll(config.items())
@@ -44,8 +51,7 @@ def clean_data(frame: DataFrame) -> DataFrame:
 def to_snowflake(frame: DataFrame) -> None:
 
     aws_client = client("secretsmanager", region_name="eu-west-1")
-    SNOWFLAKE_SECRET_ID = "snowflake/capstone/config"
-    snowflake_secret = aws_client.get_secret_value(SecretId=SNOWFLAKE_SECRET_ID)
+    snowflake_secret = aws_client.get_secret_value(SecretId=SECRET_ARN)
     snowflake_settings = json.loads(snowflake_secret["SecretString"])
     
     sfOptions = {
@@ -63,18 +69,6 @@ def to_snowflake(frame: DataFrame) -> None:
         .option("dbtable", "openaq") \
         .mode("overwrite") \
         .save()
-    
-    pass
-
-def to_bool(
-    c: str, true_values: Collection[str], false_values: Collection[str]
-) -> Column:
-
-    return sf.when(
-        sf.col(c).isin(true_values), True
-    ).otherwise(
-        sf.when(sf.col(c).isin(false_values), False)
-    )
 
 
 def drop_redundant_columns(frame: DataFrame) -> DataFrame:
@@ -172,6 +166,4 @@ if __name__ == "__main__":
     # Extract
     frame = read_data(resource_path)
     frame = clean_data(frame)
-    frame.printSchema()
-    frame.describe().show()
     to_snowflake(frame)
