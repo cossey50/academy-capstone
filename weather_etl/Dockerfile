@@ -8,8 +8,6 @@ USER 0
 
 RUN python3 -m pip install --upgrade pip && pip install -r requirements.txt
 
-# USER 185
-
 COPY weather_etl.py ./weather_etl.py
 
 ENTRYPOINT [ "python3" ]
